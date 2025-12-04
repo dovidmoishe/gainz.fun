@@ -1,0 +1,156 @@
+---
+alwaysApply: true
+---
+
+# Gainz.fun Design System
+
+## Color Palette
+
+### Primary Colors
+
+#### Electric Green (`#22FF88`)
+- **Usage**: Gains, PnL, trading indicators
+- **Tailwind Class**: `text-electric-green`, `bg-electric-green`, `border-electric-green`
+- **Use Cases**:
+  - Positive PnL values
+  - Successful trades
+  - Profit indicators
+  - Trading success states
+
+#### Deep Black (`#000000`)
+- **Usage**: Premium elements + high contrast
+- **Tailwind Class**: `text-deep-black`, `bg-deep-black`, `border-deep-black`
+- **Use Cases**:
+  - Premium UI elements
+  - High contrast text/backgrounds
+  - Emphasis elements
+
+#### Solana Purple Gradient (`#9945FF` → `#14F195`)
+- **Usage**: Chain identity, Solana-related features
+- **Tailwind Classes**: 
+  - `bg-solana-purple` (start: `#9945FF`)
+  - `bg-solana-green` (end: `#14F195`)
+- **Use Cases**:
+  - Solana wallet connections
+  - Chain-specific indicators
+  - Blockchain identity elements
+  - Gradient backgrounds: `bg-gradient-to-r from-solana-purple to-solana-green`
+
+### Accent Colors
+
+#### Cyber Yellow (`#F8F32B`)
+- **Usage**: Alerts + notifications
+- **Tailwind Class**: `text-cyber-yellow`, `bg-cyber-yellow`, `border-cyber-yellow`
+- **Use Cases**:
+  - Warning alerts
+  - Important notifications
+  - Attention-grabbing elements
+  - Alert badges
+
+#### Matrix Teal (`#0FE8D9`)
+- **Usage**: AI + tech features
+- **Tailwind Class**: `text-matrix-teal`, `bg-matrix-teal`, `border-matrix-teal`
+- **Use Cases**:
+  - AI-powered features
+  - Tech indicators
+  - Advanced functionality
+  - AI chat/assistant elements
+
+### Background Colors
+
+#### Dark Mode Default (`#0A0A0A`)
+- **Usage**: Main application background
+- **Tailwind Class**: `bg-background`
+- **Use Cases**:
+  - Page backgrounds
+  - Main container backgrounds
+  - Default dark mode background
+
+#### Soft Black (`#0F0F0F`)
+- **Usage**: Component backgrounds
+- **Tailwind Class**: `bg-background-soft`
+- **Use Cases**:
+  - Card backgrounds
+  - Component containers
+  - Elevated surfaces
+  - Modal backgrounds
+
+## Usage Examples
+
+### Trading PnL Display
+```tsx
+<div className="text-electric-green font-bold">
+  +$1,234.56
+</div>
+```
+
+### Solana Wallet Connection
+```tsx
+<button className="bg-gradient-to-r from-solana-purple to-solana-green text-white px-4 py-2 rounded">
+  Connect Solana Wallet
+</button>
+```
+
+### Alert Notification
+```tsx
+<div className="bg-cyber-yellow text-deep-black px-4 py-2 rounded">
+  ⚠️ High volatility detected
+</div>
+```
+
+### AI Feature Indicator
+```tsx
+<div className="text-matrix-teal flex items-center gap-2">
+  <SparklesIcon /> AI Trading Assistant
+</div>
+```
+
+### Component Card
+```tsx
+<div className="bg-background-soft border border-electric-green/20 rounded-lg p-6">
+  {/* Card content */}
+</div>
+```
+
+## Tailwind Utility Classes Reference
+
+### Text Colors
+- `text-electric-green` - Electric Green (#22FF88)
+- `text-deep-black` - Deep Black (#000000)
+- `text-solana-purple` - Solana Purple (#9945FF)
+- `text-solana-green` - Solana Green (#14F195)
+- `text-cyber-yellow` - Cyber Yellow (#F8F32B)
+- `text-matrix-teal` - Matrix Teal (#0FE8D9)
+- `text-foreground` - Default text color (#EDEDED)
+- `text-background` - Background color as text (#0A0A0A)
+
+### Background Colors
+- `bg-electric-green` - Electric Green (#22FF88)
+- `bg-deep-black` - Deep Black (#000000)
+- `bg-solana-purple` - Solana Purple (#9945FF)
+- `bg-solana-green` - Solana Green (#14F195)
+- `bg-cyber-yellow` - Cyber Yellow (#F8F32B)
+- `bg-matrix-teal` - Matrix Teal (#0FE8D9)
+- `bg-background` - Main background (#0A0A0A)
+- `bg-background-soft` - Soft component background (#0F0F0F)
+
+### Border Colors
+- `border-electric-green` - Electric Green border
+- `border-deep-black` - Deep Black border
+- `border-solana-purple` - Solana Purple border
+- `border-solana-green` - Solana Green border
+- `border-cyber-yellow` - Cyber Yellow border
+- `border-matrix-teal` - Matrix Teal border
+
+### Gradients
+- `bg-gradient-to-r from-solana-purple to-solana-green` - Solana identity gradient
+- `bg-gradient-to-br from-solana-purple to-solana-green` - Diagonal Solana gradient
+
+## Design Principles
+
+1. **Dark-First**: All backgrounds use dark colors (#0A0A0A, #0F0F0F)
+2. **High Contrast**: Use Deep Black (#000000) for premium, high-contrast elements
+3. **Semantic Colors**: Colors have specific meanings (green = gains, yellow = alerts, teal = AI)
+4. **Chain Identity**: Solana gradient used for blockchain-related features
+5. **Accessibility**: Ensure sufficient contrast ratios for text readability
+
