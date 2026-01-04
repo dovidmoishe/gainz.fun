@@ -12,6 +12,7 @@ interface ChatInterfaceProps {
   isLoading: boolean
   onSendMessage: (content: string) => void
   chatId?: string
+  streamingMessageId?: string | null
 }
 
 export function ChatInterface({
@@ -19,6 +20,7 @@ export function ChatInterface({
   isLoading,
   onSendMessage,
   chatId,
+  streamingMessageId,
 }: ChatInterfaceProps) {
   const [input, setInput] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -101,10 +103,20 @@ export function ChatInterface({
                       : 'bg-background-soft text-foreground border border-electric-green/20'
                   )}
                 >
-                  <p className="whitespace-pre-wrap text-sm">
-                    {typeof message.content === 'string'
-                      ? message.content
-                      : JSON.stringify(message.content)}
+                  <p className="whitespace-pre-wrap text-sm inline-flex items-center">
+                    <span>
+                      {typeof message.content === 'string'
+                        ? message.content
+                        : JSON.stringify(message.content)}
+                    </span>
+                    {streamingMessageId === message.id && (
+                      <span 
+                        className="inline-block ml-0.5 w-0.5 h-4 bg-electric-green"
+                        style={{
+                          animation: 'blink 1s step-end infinite',
+                        }}
+                      />
+                    )}
                   </p>
                 </div>
                 {message.role === 'user' && (
@@ -114,16 +126,6 @@ export function ChatInterface({
                 )}
               </div>
             ))}
-            {isLoading && (
-              <div className="flex gap-3">
-                <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-linear-to-r from-solana-purple to-solana-green">
-                  <span className="text-sm font-bold text-white">G</span>
-                </div>
-                <div className="rounded-2xl border border-electric-green/20 bg-background-soft px-4 py-3">
-                  <Loader2 className="size-4 animate-spin text-electric-green" />
-                </div>
-              </div>
-            )}
             <div ref={messagesEndRef} />
           </div>
         )}

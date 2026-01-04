@@ -5,12 +5,15 @@ import { ChatInterface } from '@/components/Chat/ChatInterface'
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar'
 import { useChat } from '@/hooks/useChat'
 import { usePrivy } from '@privy-io/react-auth'
-import { useRouter } from 'next/navigation'
+import { useRouter, useParams } from 'next/navigation'
 import { useEffect } from 'react'
 
-export default function ChatPage() {
+export default function ChatIdPage() {
   const { authenticated, ready } = usePrivy()
   const router = useRouter()
+  const params = useParams()
+  const chatId = params.id as string
+  
   const {
     chats,
     currentChatId,
@@ -30,13 +33,18 @@ export default function ChatPage() {
     }
   }, [ready, authenticated, router])
 
-  // Redirect to the most recent chat if available
   useEffect(() => {
-    if (!isLoadingChats && chats.length > 0) {
-      const mostRecentChat = chats[chats.length - 1]
-      router.push(`/chat/${mostRecentChat.id}`)
+    // Select the chat from URL when chats are loaded
+    if (chatId && !isLoadingChats && chats.length > 0) {
+      const chatExists = chats.find(c => c.id === chatId)
+      if (chatExists && currentChatId !== chatId) {
+        selectChat(chatId)
+      } else if (!chatExists && currentChatId !== chatId) {
+        // Chat doesn't exist, redirect to chat list
+        router.push('/chat')
+      }
     }
-  }, [isLoadingChats, chats, router])
+  }, [chatId, chats, isLoadingChats, currentChatId, selectChat, router])
 
   if (!ready || !authenticated) {
     return (
@@ -76,7 +84,7 @@ export default function ChatPage() {
             messages={messages}
             isLoading={isLoading}
             onSendMessage={sendMessage}
-            chatId={undefined}
+            chatId={currentChatId}
             streamingMessageId={streamingMessageId}
           />
         </SidebarInset>

@@ -27,13 +27,18 @@ export class ChatService {
   }
 
   async getAllChatsForUser(userId: string) {
-    return await db
-      .select()
-      .from(chat)
-      .where(and(
-        eq(chat.userId, userId),
-      ))
-      .orderBy(asc(chat.createdAt));
+    try {
+      return await db
+        .select()
+        .from(chat)
+        .where(and(
+          eq(chat.userId, userId),
+        ))
+        .orderBy(asc(chat.createdAt));
+    } catch (error) {
+      console.error('Error fetching chats for user:', userId, error);
+      throw new Error(`Failed to fetch chats: ${error.message}`);
+    }
   }
 
 
@@ -41,6 +46,20 @@ export class ChatService {
   async getChatById(chatId: string): Promise<Chat | null> {
     const result = await db.select().from(chat).where(eq(chat.id, chatId));
     return result.length ? result[0] : null;
+  }
+
+  async updateChat(chatId: string, updates: { title?: string }): Promise<Chat> {
+    const result = await db
+      .update(chat)
+      .set(updates)
+      .where(eq(chat.id, chatId))
+      .returning();
+    
+    if (!result.length) {
+      throw new Error('Chat not found');
+    }
+    
+    return result[0];
   }
 
   async deleteChat(chatId: string) {
@@ -67,7 +86,12 @@ export class ChatService {
     if (!messages || !messages.length) {
       throw new Error('No messages to save');
     }
-    return await db.insert(message).values(messages);
+    // Ensure createdAt is a Date object
+    const messagesWithDates = messages.map(msg => ({
+      ...msg,
+      createdAt: msg.createdAt instanceof Date ? msg.createdAt : new Date(msg.createdAt)
+    }));
+    return await db.insert(message).values(messagesWithDates);
   }
   
   async getMessagesInChat(chatId: string) {

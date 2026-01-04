@@ -6,19 +6,35 @@ import { eq } from 'drizzle-orm';
 export class UserService {
   async createUser(userData: { id: string, name: string, publicKey: string }) {
     console.log('Creating user in database:', userData);
-    const [result] = await db.insert(user).values({
-      id: userData.id,
-      name: userData.name,
-      publicKey: userData.publicKey,
-    }).returning();
-    return result;
+    try {
+      const [result] = await db.insert(user).values({
+        id: userData.id,
+        name: userData.name,
+        publicKey: userData.publicKey,
+      }).returning();
+      console.log('User created successfully:', result);
+      return result;
+    } catch (error: any) {
+      console.error('Error creating user:', error);
+      // If user already exists, try to get it
+      if (error.code === '23505') { // Unique violation
+        console.log('User already exists, fetching...');
+        const [existing] = await db.select().from(user).where(eq(user.id, userData.id));
+        if (existing) {
+          return existing;
+        }
+      }
+      throw error;
+    }
   }
 
   async getUserById(id: string) {
+    console.log("Checking for user" + " " + id)
     const [result] = await db.select().from(user).where(eq(user.id, id));
     if (!result) {
       throw new NotFoundException('User not found');
     }
+    
     return result;
   }
   async getUserByPublicKey(publicKey: string) {

@@ -1,89 +1,117 @@
 import httpClient from "../core/httpClient";
+import { Message } from "./chat.service";
 
 export interface AIMessage {
-    id?: string;
+    id: string;
     role: 'user' | 'assistant';
     content: string;
-    createdAt?: Date;
-    chatId?: string;
+    createdAt: Date;
+    chatId: string;
 }
 
 export class AIService {
-    async streamResponse(
-        messages: AIMessage[],
-        chatId: string,
-        userId: string,
-        onToken: (token: string) => void,
-        onComplete: () => void,
-        onError: (error: Error) => void,
-        userPublicKey?: string,
-        walletId?: string
-    ): Promise<void> {
-        try {
-            const baseURL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3000";
-            const response = await fetch(`${baseURL}/ai/stream`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    messages,
-                    chatId,
-                    userId,
-                    userPublicKey,
-                    walletId,
-                }),
-            });
+    async generateMessagesStream(
+        dto: { messages: Message[]; chatId: string; userId: string },
+        onToken: (token: string, type?: string) => void,
+        onComplete: (fullMessage: Message) => void,
+        onError: (error: Error) => void
+    ): Promise<() => void> {
+        const baseURL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:4000";
+        const abortController = new AbortController();
+        let eventSource: EventSource | null = null;
 
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-
-            const reader = response.body?.getReader();
-            const decoder = new TextDecoder();
-
-            if (!reader) {
-                throw new Error('No response body');
-            }
-
-            let buffer = '';
-
-            while (true) {
-                const { done, value } = await reader.read();
+        (async () => {
+            try {
+                console.log('🚀 Initializing stream with messages:', dto.messages.length);
+                console.log('📤 Sending init request to /ai/message-stream/init');
                 
-                if (done) {
-                    onComplete();
-                    break;
-                }
-
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop() || ''; // Keep incomplete line in buffer
-
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        try {
-                            // Parse the JSON string that was stringified by the backend
-                            const jsonString = line.slice(6);
-                            const data = JSON.parse(jsonString);
-                            
-                            // Handle content tokens
-                            if (data.data?.token && data.data.type === 'content') {
-                                onToken(data.data.token);
-                            }
-                            // Handle function results
-                            if (data.data?.token && data.data.type === 'function_result') {
-                                onToken(data.data.token);
-                            }
-                        } catch (e) {
-                            // Ignore parse errors for incomplete JSON
-                        }
+                const initResponse = await httpClient.post<{ streamId: string }>(
+                    '/ai/message-stream/init',
+                    {
+                        messages: dto.messages.map(msg => ({
+                            ...msg,
+                            createdAt: msg.createdAt instanceof Date 
+                                ? msg.createdAt.toISOString() 
+                                : msg.createdAt,
+                        })),
+                        chatId: dto.chatId,
+                        userId: dto.userId,
                     }
-                }
+                );
+
+                console.log('📥 Init response received:', initResponse.data);
+                const { streamId } = initResponse.data;
+                console.log('✅ Stream initialized with streamId:', streamId);
+
+                const url = `${baseURL}/ai/message-stream/${streamId}`;
+                console.log('🔗 Connecting to SSE:', url);
+
+                eventSource = new EventSource(url);
+
+                let buffer = '';
+
+                eventSource.onopen = () => {
+                    console.log('✅ SSE connection opened');
+                };
+
+                eventSource.onmessage = (event) => {
+                    try {
+                        if (event.data) {
+                            const data = JSON.parse(event.data);
+                            
+                            if (data.token) {
+                                onToken(data.token, data.type);
+                            }
+                        }
+                    } catch (e) {
+                        console.error('❌ Error parsing SSE data:', e, 'Raw data:', event.data);
+                    }
+                };
+
+                eventSource.addEventListener('done', (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        console.log('✅ Stream completed with message ID:', data.id);
+                        
+                        const fullMessage: Message = {
+                            id: data.id,
+                            chatId: dto.chatId,
+                            role: 'assistant',
+                            content: '',
+                            createdAt: new Date().toISOString(),
+                        };
+                        
+                        eventSource?.close();
+                        onComplete(fullMessage);
+                    } catch (e) {
+                        console.error('❌ Error parsing done event:', e);
+                        onError(new Error('Failed to parse completion event'));
+                    }
+                });
+
+                eventSource.onerror = (error) => {
+                    console.error('❌ EventSource error:', error);
+                    console.error('EventSource readyState:', eventSource?.readyState);
+                    
+                    // Always close and error out - don't let EventSource auto-reconnect
+                    eventSource?.close();
+                    onError(new Error('Stream connection failed or closed'));
+                };
+
+                abortController.signal.addEventListener('abort', () => {
+                    eventSource?.close();
+                });
+            } catch (error: any) {
+                console.error('❌ Error initializing stream:', error);
+                eventSource?.close();
+                onError(new Error(error.response?.data?.message || error.message || 'Failed to initialize stream'));
             }
-        } catch (error) {
-            onError(error as Error);
-        }
+        })();
+
+        return () => {
+            abortController.abort();
+            eventSource?.close();
+        };
     }
 }
 

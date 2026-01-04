@@ -14,12 +14,20 @@ export class SolanaService {
   private readonly connection: Connection;
   constructor(private readonly walletService: WalletService) {
     this.referralAccount = 'BTxbf6nkRX2wUiNpBVhA5SytPvST7KvEQoBDWVfpcvtv';
-  this.connection = new Connection(clusterApiUrl('mainnet-beta'));
+    this.connection = new Connection(
+      'https://solana-mainnet.g.alchemy.com/v2/pVe3T4LaDnJDqmmlBrkp_',
+    );
   }
   async getPrice(token: string) {
     const endPoint = `https://lite-api.jup.ag/price/v3?ids=${token}`;
     const response = await axios.get(endPoint);
-    return response.data[token].price.toFixed(2);
+    console.log(response.data);
+    const priceData = response.data?.data?.[token] || response.data?.[token];
+    console.log(priceData);
+    if (!priceData || typeof priceData.usdPrice !== 'number') {
+      throw new Error(`Price not found for token ${token}`);
+    }
+    return priceData.usdPrice.toFixed(2);
   }
 
   async searchToken(query: string) {
@@ -79,6 +87,9 @@ export class SolanaService {
   async getPort(userAddress: string) {
     const userPublicKey = new PublicKey(userAddress)
 
+    const solBalance = await this.connection.getBalance(userPublicKey);
+    const solBalanceInSol = solBalance / 1_000_000_000;
+
     const tokenAccounts = await this.connection.getParsedTokenAccountsByOwner(
       userPublicKey,
       {
@@ -86,7 +97,25 @@ export class SolanaService {
       }
     );
 
-    const tokensAndWorths: { mintAddress: string, worth: number }[] = [];
+    const tokensAndWorths: { mintAddress: string, worth: number, balance?: number }[] = [];
+    
+    if (solBalanceInSol > 0) {
+      try {
+        const solPrice = Number(await this.getPrice('So11111111111111111111111111111111111111112') || 0);
+        tokensAndWorths.push({
+          mintAddress: 'So11111111111111111111111111111111111111112',
+          worth: solBalanceInSol * solPrice,
+          balance: solBalanceInSol,
+        });
+      } catch (error) {
+        console.warn('Failed to get SOL price:', error);
+        tokensAndWorths.push({
+          mintAddress: 'So11111111111111111111111111111111111111112',
+          worth: 0,
+          balance: solBalanceInSol,
+        });
+      }
+    }
     
     await Promise.all(
       tokenAccounts.value.map(async (tokenAccount) => {
@@ -100,12 +129,14 @@ export class SolanaService {
             tokensAndWorths.push({
               mintAddress,
               worth: tokenBalance * price,
+              balance: tokenBalance,
             });
           } catch (error) {
             console.warn(`Failed to get price for ${mintAddress}:`, error);
             tokensAndWorths.push({
               mintAddress,
               worth: 0,
+              balance: tokenBalance,
             });
           }
         }
@@ -126,12 +157,14 @@ export class SolanaService {
           return {
             mintAddress: token.mintAddress,
             price: Number(price),
+            balance: token.balance,
             worth: token.worth,
           };
         } catch (error) {
           return {
             mintAddress: token.mintAddress,
             price: 0,
+            balance: token.balance,
             worth: token.worth,
           };
         }
@@ -204,7 +237,7 @@ export class SolanaService {
   getSwapTokensTool() {
     return {
       name: 'swapTokens',
-      description: 'Swap tokens on Solana using Jupiter aggregator. Creates and signs a swap transaction that the user can execute.',
+      description: 'Swap tokens on Solana using Jupiter aggregator. Creates and signs a swap transaction. IMPORTANT: When user says "swap 50% of my SOL" or "swap $1 worth of SOL", you MUST first call getPortfolioOverview to get their balance, calculate the correct amount in lamports, then call swapTokens. The user\'s wallet is automatically used.',
       parameters: {
         type: 'object' as const,
         properties: {
@@ -218,18 +251,10 @@ export class SolanaService {
           },
           amount: {
             type: 'number' as const,
-            description: 'The amount of tokens to swap (in the smallest unit, e.g., lamports for SOL)',
-          },
-          userPublicKey: {
-            type: 'string' as const,
-            description: 'The Solana public key (wallet address) of the user performing the swap',
-          },
-          walletId: {
-            type: 'string' as const,
-            description: 'The Privy wallet ID for signing the transaction',
+            description: 'The EXACT amount of tokens to swap in the smallest unit (e.g., lamports for SOL). 1 SOL = 1,000,000,000 lamports. You must calculate this from percentages or dollar amounts by checking their portfolio first.',
           },
         },
-        required: ['fromToken', 'toToken', 'amount', 'userPublicKey', 'walletId'],
+        required: ['fromToken', 'toToken', 'amount'],
       },
     };
   }
@@ -237,16 +262,11 @@ export class SolanaService {
   getPortfolioOverviewTool() {
     return {
       name: 'getPortfolioOverview',
-      description: 'Get a comprehensive overview of a user\'s Solana portfolio including all tokens, their balances, prices, and total portfolio value. Use this to analyze and provide insights about the user\'s holdings.',
+      description: 'Get the user\'s Solana portfolio with all token balances, prices, and total value. REQUIRED before executing percentage-based swaps (e.g., "swap 50% of SOL") or dollar-amount swaps (e.g., "swap $1 worth of SOL") to calculate the correct amount. Also use when user asks to see their portfolio.',
       parameters: {
         type: 'object' as const,
-        properties: {
-          userAddress: {
-            type: 'string' as const,
-            description: 'The Solana wallet address (public key) of the user whose portfolio to analyze',
-          },
-        },
-        required: ['userAddress'],
+        properties: {},
+        required: [],
       },
     };
   }
@@ -291,67 +311,94 @@ export class SolanaService {
       timeout: 30000,
     });
 
-    let quoteResponse;
+    const minSwapAmount = 100000;
+    if (amount < minSwapAmount) {
+      throw new Error(`Swap amount too small. Minimum is ${minSwapAmount / 1e9} SOL (${minSwapAmount} lamports). You tried to swap ${amount / 1e9} SOL.`);
+    }
 
-    const quoteUrl = `${jupiterEndpoint}/quote?inputMint=${fromToken}\
-&outputMint=${toToken}\
-&amount=${amount}\
-&slippageBps=50`;
+    let quoteResponse;
+    const quoteUrl = `${jupiterEndpoint}/quote?inputMint=${fromToken}&outputMint=${toToken}&amount=${Math.floor(amount)}&slippageBps=50`;
 
     try {
       console.log(`Requesting quote from: ${quoteUrl}`);
       quoteResponse = await axiosInstance.get(quoteUrl);
       console.log('Quote received successfully');
     } catch (error) {
-      console.warn(
-        `Failed to get quote from ${jupiterEndpoint}:`,
-        error.message,
-      );
+      console.error(`Failed to get quote from ${jupiterEndpoint}:`, error.message);
+      if (error.response?.data) {
+        console.error('Quote error details:', error.response.data);
+      }
+      throw new Error(`Failed to get swap quote: ${error.response?.data?.error || error.message}. The amount may be too small or the token pair may not be available.`);
+    }
+
+    if (!quoteResponse || !quoteResponse.data) {
+      throw new Error('No quote response received from Jupiter API');
     }
 
     let swapResponse;
-
     const swapUrl = `${jupiterEndpoint}/swap`;
 
     try {
-        console.log(`Requesting swap transaction from: ${swapUrl}`);
-        swapResponse = await axiosInstance.post(swapUrl, {
-          quoteResponse: quoteResponse.data,
-          userPublicKey: userPublicKey,
-          
-          dynamicComputeUnitLimit: true,
-          dynamicSlippage: true,
-          prioritizationFeeLamports: {
-            priorityLevelWithMaxLamports: {
-              maxLamports: 1000000,
-              priorityLevel: "veryHigh"
-            }
+      console.log(`Requesting swap transaction from: ${swapUrl}`);
+      swapResponse = await axiosInstance.post(swapUrl, {
+        quoteResponse: quoteResponse.data,
+        userPublicKey: userPublicKey,
+        dynamicComputeUnitLimit: true,
+        dynamicSlippage: true,
+        prioritizationFeeLamports: {
+          priorityLevelWithMaxLamports: {
+            maxLamports: 1000000,
+            priorityLevel: "veryHigh"
           }
-        });
-        console.log('Swap transaction received with optimization parameters');
-        
-        if (swapResponse.data.prioritizationFeeLamports) {
-          console.log('Prioritization fee lamports:', swapResponse.data.prioritizationFeeLamports);
         }
-        if (swapResponse.data.computeUnitLimit) {
-          console.log('Compute unit limit:', swapResponse.data.computeUnitLimit);
-        }
-        if (swapResponse.data.dynamicSlippageReport) {
-          console.log('Dynamic slippage report:', swapResponse.data.dynamicSlippageReport);
-        }
-        
-      } catch (error) {
-        console.warn(`Failed to get swap transaction from ${jupiterEndpoint}:`, error.message);
+      });
+      console.log('Swap transaction received with optimization parameters');
+      
+      if (swapResponse.data.prioritizationFeeLamports) {
+        console.log('Prioritization fee lamports:', swapResponse.data.prioritizationFeeLamports);
       }
-      const { 
-        swapTransaction, 
-        lastValidBlockHeight,
-        prioritizationFeeLamports,
-        computeUnitLimit,
-        prioritizationType,
-        dynamicSlippageReport,
-        simulationError
-      } = swapResponse.data;
+      if (swapResponse.data.computeUnitLimit) {
+        console.log('Compute unit limit:', swapResponse.data.computeUnitLimit);
+      }
+      if (swapResponse.data.dynamicSlippageReport) {
+        console.log('Dynamic slippage report:', swapResponse.data.dynamicSlippageReport);
+      }
+    } catch (error) {
+      console.error(`Failed to get swap transaction from ${jupiterEndpoint}:`, error.message);
+      if (error.response?.data) {
+        console.error('Swap error details:', error.response.data);
+      }
+      throw new Error(`Failed to create swap transaction: ${error.response?.data?.error || error.message}`);
+    }
+
+    if (!swapResponse || !swapResponse.data) {
+      throw new Error('No swap response received from Jupiter API');
+    }
+
+    const { 
+      swapTransaction, 
+      lastValidBlockHeight,
+      prioritizationFeeLamports,
+      computeUnitLimit,
+      prioritizationType,
+      dynamicSlippageReport,
+      simulationError
+    } = swapResponse.data;
+
+    if (simulationError) {
+      console.error('Transaction simulation failed:', JSON.stringify(simulationError, null, 2));
+      const errorMsg = simulationError.message || 'Unknown simulation error';
+      
+      if (errorMsg.includes('insufficient') || errorMsg.includes('Insufficient')) {
+        throw new Error(`Insufficient balance. You may not have enough SOL to cover both the swap and transaction fees. Try reducing the amount.`);
+      }
+      
+      if (errorMsg.includes('slippage')) {
+        throw new Error(`Price slippage too high. The token price changed too much. Please try again.`);
+      }
+      
+      throw new Error(`Transaction simulation failed: ${errorMsg}`);
+    }
       
       console.log('Signing transaction with Privy wallet...');
       const signedTransactionBase64 = await this.walletService.signTransaction(

@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Delete,
+  Patch,
   Body,
   Param,
 } from '@nestjs/common';
@@ -37,6 +38,14 @@ export class ChatController {
   @Get(':chatId')
   async getChatById(@Param('chatId') chatId: string) {
     return await this.chatService.getChatById(chatId);
+  }
+
+  @Patch(':chatId')
+  async updateChat(
+    @Param('chatId') chatId: string,
+    @Body() body: { title?: string },
+  ) {
+    return await this.chatService.updateChat(chatId, body);
   }
 
   @Delete(':chatId')

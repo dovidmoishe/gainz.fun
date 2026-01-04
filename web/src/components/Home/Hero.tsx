@@ -1,14 +1,18 @@
 'use client'
 
-import React from 'react'
+import React, { useState } from 'react'
 import { usePrivy } from '@privy-io/react-auth'
 import { useRouter } from 'next/navigation'
+import ChatService from '../../../services/chat.service'
 
 type Props = {}
 
+const chatService = new ChatService()
+
 function Hero({}: Props) {
-  const { login, ready, authenticated } = usePrivy()
+  const { login, ready, authenticated, user } = usePrivy()
   const router = useRouter()
+  const [isCreatingChat, setIsCreatingChat] = useState(false)
 
   const handleLoginWithX = () => {
     if (ready && !authenticated) {
@@ -16,8 +20,25 @@ function Hero({}: Props) {
     }
   }
 
-  const handleGoToChat = () => {
-    router.push('/chat')
+  const handleGoToChat = async () => {
+    if (!user?.id) return
+    
+    try {
+      setIsCreatingChat(true)
+      // Create a new chat automatically
+      const newChat = await chatService.createChat({
+        title: 'new chat',
+        userId: user.id,
+      })
+      // Navigate to the chat with UUID in URL
+      router.push(`/chat/${newChat.id}`)
+    } catch (error) {
+      console.error('Failed to create chat:', error)
+      // Fallback to chat list page
+      router.push('/chat')
+    } finally {
+      setIsCreatingChat(false)
+    }
   }
 
   return (
@@ -35,20 +56,33 @@ function Hero({}: Props) {
           <div className="flex flex-col sm:flex-row gap-4 items-center justify-center">
             <button
               onClick={handleGoToChat}
-              className="px-6 py-3 bg-electric-green text-deep-black rounded-full font-semibold text-lg cursor-pointer hover:bg-electric-green/90 transition-colors flex items-center gap-3"
+              disabled={isCreatingChat}
+              className="px-6 py-3 bg-electric-green text-deep-black rounded-full font-semibold text-lg cursor-pointer hover:bg-electric-green/90 transition-colors flex items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <svg
-                className="w-5 h-5"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-              </svg>
-              <span>start trading</span>
+              {isCreatingChat ? (
+                <>
+                  <svg className="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span>creating...</span>
+                </>
+              ) : (
+                <>
+                  <svg
+                    className="w-5 h-5"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                  </svg>
+                  <span>start trading</span>
+                </>
+              )}
             </button>
           </div>
         ) : (

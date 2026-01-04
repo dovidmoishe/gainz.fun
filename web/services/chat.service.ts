@@ -17,7 +17,7 @@ export interface Message {
 }
 
 export class ChatService {
-	async createChat(data: { title: string; userId: string; chatId?: string }): Promise<Chat> {
+	async createChat(data: { title: string; userId: string }): Promise<Chat> {
 		const response = await httpClient.post<Chat>('/chat', data);
 		return response.data;
 	}
@@ -37,8 +37,8 @@ export class ChatService {
 		return response.data;
 	}
 
-	async saveMessages(messages: Message[]): Promise<any> {
-		const response = await httpClient.post('/chat/messages', { messages });
+	async updateChatTitle(chatId: string, title: string): Promise<Chat> {
+		const response = await httpClient.patch<Chat>(`/chat/${chatId}`, { title });
 		return response.data;
 	}
 

@@ -1,12 +1,20 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { usePrivy, useWallets } from '@privy-io/react-auth'
 import ChatService, { Chat, Message } from '../../services/chat.service'
-import AIService, { AIMessage } from '../../services/ai.service'
-import { v4 as uuidv4 } from 'uuid'
+import aiService from '../../services/ai.service'
 
 const chatService = new ChatService()
+
+// Generate UUID v4
+const generateUUID = () => {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+    const r = (Math.random() * 16) | 0;
+    const v = c == "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+};
 
 export function useChat() {
   const { user, authenticated } = usePrivy()
@@ -16,6 +24,9 @@ export function useChat() {
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isLoadingChats, setIsLoadingChats] = useState(true)
+  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null)
+  const messageContentRef = useRef<Map<string, string>>(new Map())
+  const streamCleanupRef = useRef<(() => void) | null>(null)
 
   const loadChats = useCallback(async () => {
     if (!user?.id) return
@@ -59,16 +70,15 @@ export function useChat() {
     if (!user?.id) return
 
     try {
-      const newChatId = uuidv4()
       const newChat = await chatService.createChat({
         title: 'new chat',
         userId: user.id,
-        chatId: newChatId,
       })
       
       setChats((prev) => [...prev, newChat])
       setCurrentChatId(newChat.id)
       setMessages([])
+      return newChat.id
     } catch (error) {
       console.error('Failed to create chat:', error)
     }
@@ -96,47 +106,70 @@ export function useChat() {
     async (content: string) => {
       if (!currentChatId || !user?.id) return
 
+      // Clean up any existing stream
+      if (streamCleanupRef.current) {
+        streamCleanupRef.current()
+        streamCleanupRef.current = null
+      }
+
+      // Generate UUID for user message
+      const userMessageId = generateUUID()
       const userMessage: Message = {
-        id: uuidv4(),
+        id: userMessageId,
         chatId: currentChatId,
         role: 'user',
-        content,
+        content: typeof content === 'string' ? content : JSON.stringify(content),
         createdAt: new Date().toISOString(),
       }
 
+      // Optimistic update: add user message immediately
       setMessages((prev) => [...prev, userMessage])
       setIsLoading(true)
 
-      let assistantMessageContent = ''
-      const assistantMessageId = uuidv4()
+      const assistantMessageId = generateUUID()
+      setStreamingMessageId(assistantMessageId)
+      messageContentRef.current.set(assistantMessageId, '')
+      
+      // Safety timeout to reset loading state if stream doesn't complete
+      const safetyTimeout = setTimeout(() => {
+        console.warn('⚠️ Stream timeout - resetting loading state');
+        setIsLoading(false)
+        setStreamingMessageId(null)
+        messageContentRef.current.delete(assistantMessageId)
+      }, 120000) // 2 minutes timeout
 
       try {
-        // Get wallet info from Privy
-        const solanaWallet = wallets.find(w => w.walletClientType === 'privy')
-        const userPublicKey = solanaWallet?.address
-        // For Privy embedded wallets, the wallet ID for API calls is the wallet address
-        // The backend Privy API uses the address as the wallet identifier
-        const walletId = solanaWallet?.address
-
-        const aiMessages: AIMessage[] = [...messages, userMessage].map((msg) => ({
-          role: msg.role as 'user' | 'assistant',
-          content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
+        // Prepare all messages for the stream (including the new user message)
+        const allMessagesForStream = [...messages, userMessage].map(msg => ({
+          ...msg,
+          content: typeof msg.content === 'string' 
+            ? msg.content 
+            : (typeof msg.content === 'object' 
+                ? JSON.stringify(msg.content) 
+                : String(msg.content)),
         }))
 
-        await AIService.streamResponse(
-          aiMessages,
-          currentChatId,
-          user.id,
-          (token: string) => {
-            assistantMessageContent += token
-            
+        // Start streaming
+        const cleanup = await aiService.generateMessagesStream(
+          {
+            messages: allMessagesForStream,
+            chatId: currentChatId,
+            userId: user.id,
+          },
+          (token: string, type?: string) => {
+            // Accumulate tokens in ref
+            const currentContent = messageContentRef.current.get(assistantMessageId) || ''
+            const newContent = currentContent + token
+            messageContentRef.current.set(assistantMessageId, newContent)
+
+            // Update state with accumulated content
             setMessages((prev) => {
               const existingIndex = prev.findIndex((m) => m.id === assistantMessageId)
               const assistantMessage: Message = {
                 id: assistantMessageId,
                 chatId: currentChatId,
                 role: 'assistant',
-                content: assistantMessageContent,
+                content: newContent,
                 createdAt: new Date().toISOString(),
               }
 
@@ -149,33 +182,21 @@ export function useChat() {
               }
             })
           },
-          async () => {
-            setIsLoading(false)
+          async (fullMessage: Message) => {
+            console.log('✅ Stream completed callback fired');
+            clearTimeout(safetyTimeout)
+            
+            // Clean up streaming state
+            setStreamingMessageId(null)
+            messageContentRef.current.delete(assistantMessageId)
 
-            const finalAssistantMessage: Message = {
-              id: assistantMessageId,
-              chatId: currentChatId,
-              role: 'assistant',
-              content: assistantMessageContent,
-              createdAt: new Date().toISOString(),
-            }
-
-            try {
-              await chatService.saveMessages([finalAssistantMessage])
-            } catch (error) {
-              console.error('Failed to save assistant message:', error)
-            }
-
+            // Update chat title if it's the first user message
             if (messages.length === 0) {
               const firstWords = content.split(' ').slice(0, 5).join(' ')
               const newTitle = firstWords.length < content.length ? `${firstWords}...` : firstWords
               
               try {
-                await chatService.createChat({
-                  title: newTitle,
-                  userId: user.id,
-                  chatId: currentChatId,
-                })
+                await chatService.updateChatTitle(currentChatId, newTitle)
                 
                 setChats((prev) =>
                   prev.map((chat) =>
@@ -186,29 +207,52 @@ export function useChat() {
                 console.error('Failed to update chat title:', error)
               }
             }
+
+            // Reload messages to ensure sync with backend
+            await loadMessages(currentChatId)
+            
+            // Set loading to false AFTER everything is done
+            setIsLoading(false)
           },
           (error: Error) => {
             console.error('AI stream error:', error)
+            clearTimeout(safetyTimeout)
             setIsLoading(false)
+            setStreamingMessageId(null)
+            messageContentRef.current.delete(assistantMessageId)
             
             const errorMessage: Message = {
-              id: uuidv4(),
+              id: generateUUID(),
               chatId: currentChatId,
               role: 'assistant',
               content: 'sorry, something went wrong. please try again.',
               createdAt: new Date().toISOString(),
             }
             setMessages((prev) => [...prev, errorMessage])
-          },
-          userPublicKey,
-          walletId
+          }
         )
+
+        streamCleanupRef.current = cleanup
       } catch (error) {
         console.error('Failed to send message:', error)
+        const err = error as any
+        console.error('Error details:', err.response?.data || err.message)
+        clearTimeout(safetyTimeout)
         setIsLoading(false)
+        setStreamingMessageId(null)
+        messageContentRef.current.delete(assistantMessageId)
+        
+        const errorMessage: Message = {
+          id: generateUUID(),
+          chatId: currentChatId,
+          role: 'assistant',
+          content: `error: ${err.response?.data?.message || err.message || 'failed to send message. please try again.'}`,
+          createdAt: new Date().toISOString(),
+        }
+        setMessages((prev) => [...prev, errorMessage])
       }
     },
-    [currentChatId, user?.id, messages, wallets]
+    [currentChatId, user?.id, messages, loadMessages]
   )
 
   return {
@@ -217,6 +261,7 @@ export function useChat() {
     messages,
     isLoading,
     isLoadingChats,
+    streamingMessageId,
     createNewChat,
     selectChat,
     deleteChat,
